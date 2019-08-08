@@ -41,7 +41,8 @@
 
 %% Low level API
 -export([get_active/1,
-         set_active/2]).
+         set_active/2,
+        get_tcp_time/1]).
 
 -ifdef(EUNIT_TEST).
 -compile(export_all).
@@ -52,7 +53,7 @@
 -type sm_state() :: {boolean(), non_neg_integer(), 'active'|'inactive'}.
 -export_type([sm_state/0]).
 
--define(WAIT_FOR_SOCKET_CLOSE_TIMEOUT, 1000).
+-define(WAIT_FOR_SOCKET_CLOSE_TIMEOUT, 200).
 -define(SERVER, ?MODULE).
 -include("escalus_tcp.hrl").
 
@@ -80,6 +81,7 @@
 -spec connect([proplists:property()] | opts()) -> pid().
 connect(Opts0) ->
     Opts1 = opts_to_map(Opts0),
+%%    io:format("**Opts1: ~p\n **?module: ~p\n **self: ~p\n ",[Opts1,?MODULE, self()]),
     {ok, Pid} = gen_server:start_link(?MODULE, [Opts1, self()], []),
     Pid.
 
@@ -98,6 +100,8 @@ reset_parser(Pid) ->
 -spec get_sm_h(pid()) -> non_neg_integer().
 get_sm_h(Pid) ->
     gen_server:call(Pid, get_sm_h).
+get_tcp_time(Pid) ->
+  gen_server:call(Pid, get_tcp_time).
 
 -spec set_sm_h(pid(), non_neg_integer()) -> {ok, non_neg_integer()}.
 set_sm_h(Pid, H) ->
@@ -190,16 +194,21 @@ set_active(Pid, Active) ->
 %%%===================================================================
 -spec init(list()) -> {ok, state()}.
 init([Opts0, Owner]) ->
+    io:format("**owner:~p\n", [ Owner]),
     Opts1 = overwrite_default_opts(Opts0, default_options()),
+%%  io:format("**opts1 before :~p\n ",[Opts1]),
     #{ssl          := IsSSLConnection,
       on_reply     := OnReplyFun,
       on_request   := OnRequestFun,
       parser_opts  := ParserOpts,
       event_client := EventClient} = Opts1,
-    SM = get_stream_management_opt(Opts1),
 
-    {ok, Socket} = do_connect(Opts1),
-    {ok, Parser} = exml_stream:new_parser(ParserOpts),
+    SM = get_stream_management_opt(Opts1),
+%%    io:format("**opts1:~p\n **SM:~p\n",[Opts1,SM]),
+  {{ok, Socket},TCPTime} = do_connect(Opts1),
+    io:format("**socket:~p\n",[Socket]),
+  io:format("**TCPTIME:~p\n",[TCPTime]),
+  {ok, Parser} = exml_stream:new_parser(ParserOpts),
     {ok, #state{owner = Owner,
                 socket = Socket,
                 parser = Parser,
@@ -207,10 +216,14 @@ init([Opts0, Owner]) ->
                 sm_state = SM,
                 event_client = EventClient,
                 on_reply = OnReplyFun,
-                on_request = OnRequestFun}}.
+                on_request = OnRequestFun,
+                tcp_time = TCPTime}}.
+
 
 -spec handle_call(term(), {pid(), term()}, state()) ->
     {reply, term(), state()} | {stop, normal, ok, state()}.
+handle_call(get_tcp_time, _From, State) ->
+  {reply, State#state.tcp_time, State};
 handle_call(get_sm_h, _From, #state{sm_state = {_, H, _}} = State) ->
     {reply, H, State};
 handle_call({set_sm_h, H}, _From, #state{sm_state = {A, _OldH, S}} = State) ->
@@ -296,6 +309,7 @@ terminate(Reason, #state{socket = Socket, ssl = true} = State) ->
     ssl:close(Socket);
 terminate(Reason, #state{socket = Socket} = State) ->
     common_terminate(Reason, State),
+    io:format("**Close gentcp TCPTIME:~p\n",[#state.tcp_time ]),
     gen_tcp:close(Socket).
 
 -spec code_change(term(), state(), term()) -> {ok, state()}.
@@ -493,14 +507,18 @@ do_connect(#{ssl        := IsSSLConn,
     TimeB = os:timestamp(),
     Reply = maybe_ssl_connection(IsSSLConn, Address, Port, SocketOpts, SSLOpts),
     TimeA = os:timestamp(),
-    ConnectionTime = timer:now_diff(TimeA, TimeB),
+    ConnectionTime = {tcp_time, timer:now_diff(TimeA, TimeB)},
+%%    io:format("**reply:~p\n **time:~p\n **fun:~p\n",[Reply,ConnectionTime,
+%%              erlang:fun_info(OnConnectFun)]),
     case Reply of
         {ok, Socket} ->
-            OnConnectFun({ok, Socket, ConnectionTime});
+          O = OnConnectFun({ok, Socket, ConnectionTime});
+%%            io:format("**fun output:~p\n",[O]);
         {error, _} ->
-            OnConnectFun(Reply)
+          O = OnConnectFun(Reply)
+%%          io:format("**fun output:~p\n",[O])
     end,
-    Reply.
+  {Reply, ConnectionTime}.
 
 maybe_ssl_connection(true, Address, Port, SocketOpts, SSLOpts) ->
     ssl:connect(Address, Port, SocketOpts ++ SSLOpts);

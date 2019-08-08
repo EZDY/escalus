@@ -25,4 +25,6 @@
                 on_request,
                 active = true,
                 sm_state = {true, 0, inactive} :: escalus_tcp:sm_state(),
-                sent_stanzas = []}).
+                sent_stanzas = [],
+                tcp_time,
+                auth_time}).

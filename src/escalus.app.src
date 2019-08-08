@@ -6,6 +6,9 @@
   {applications, [
                   kernel,
                   stdlib,
+                  wx,
+                  observer,
+                  runtime_tools,
                   ssl,
                   exml,
                   fusco,

@@ -9,7 +9,7 @@
 -include("escalus.hrl").
 
 %% High-level API
--export([start/1, start/2,
+-export([start/1, start/2, mohak_start/1, create_config_file/1,
          stop/1]).
 
 %% Low-level API
@@ -100,6 +100,27 @@
 %%%===================================================================
 %%% Public API
 %%%===================================================================
+mohak_start(N) ->
+%%  {_,{_,_,_,P1,_,_},_,_} = lists:nth(1,P).
+  {ok, Config} = file:consult("../../../../priv/escalusN.config"),
+  %%escalus:create_users(Config),
+  L = [escalus_users:get_options(Config, list_to_atom("user_" ++ integer_to_list(X))) || X <- lists:seq(1, N)],
+%%  io:format("~nL:~p~n", [L]),
+  PidList = [escalus_connection:start(X)|| X <- L],
+  TimeList = [{ connection_time,TcpTime+AuthTime,tcp_time,TcpTime,auth_time,AuthTime} || {_,_,_,{_,TcpTime},{_,AuthTime}} <- PidList],
+%%  CList = [{ Client,TcpTime,AuthTime} || {_,Client,_,TcpTime,AuthTime} <- PidList],
+%%    io:format("~nTimeList:~p~n", [TimeList]),
+%%    io:format("~nPidList:~p~n", [PidList]),
+
+%%  TCPTime = (#time.tcp_end - #time.tcp_start)/ 1.0e6,
+%%  AuthTime= (#time.auth_end - #time.auth_start)/ 1.0e6,
+%%  ConnectionTime= (#time.auth_end - #time.tcp_start)/ 1.0e6,
+%%  io:format("~nTCP:~p~s~n", [TCPTime ,"ms"]),
+%%  io:format("~nAUTH:~p~s~n", [AuthTime ,"ms"]),
+  TimeList.
+  %%io:format("~nCONN:~p~s~n", [ConnectionTime ,"ms"]).
+  %%io:format("***tcp: ~p \n***auth: ~p \n***connection: ~p \n", [TCPTime, AuthTime, TCPTime+AuthTime]).
+
 
 -spec start(escalus_users:user_spec()) -> {ok, client(), escalus_users:user_spec()}
                                         | {error, any()}.
@@ -133,13 +154,23 @@ start(Props) ->
             [step_spec()]) -> {ok, client(), escalus_session:features()} |
                               {error, any()}.
 start(Props, Steps) ->
+%%    io:format("**props: ~p\n **Steps: ~p\n", [Props, Steps]),
     try
+        %#time{tcp_start = erlang:system_time()},
         Client = connect(Props),
+        {_,_,_,Pid,_,_}= Client,
+        TcpTime = escalus_tcp:get_tcp_time(Pid),
+        %#time{tcp_end = erlang:system_time()},
+%%        io:format("**client: ~p\n", [Client]),
+        TimeB = os:timestamp(),
         {Client1, Features} = lists:foldl(fun connection_step/2,
-                                                {Client, []},
-                                                [prepare_step(Step)
-                                                 || Step <- Steps]),
-        {ok, Client1, Features}
+          {Client, []},
+          [prepare_step(Step)
+            || Step <- Steps]),
+        TimeA = os:timestamp(),
+        AuthTime = {auth_time, timer:now_diff(TimeA, TimeB)},
+
+        {ok, Client1, Features, AuthTime, TcpTime}
     catch
         throw:{connection_step_failed, _Details, _Reason} = Error ->
             {error, Error}
@@ -148,7 +179,9 @@ start(Props, Steps) ->
 -spec connection_step(step_spec(), {client(), escalus_session:features()}) ->
                              {client(), escalus_session:features()}.
 connection_step(Step, {Client, Features}) ->
-    try
+%%  io:format("**step: ~p\n **client1: ~p\n **features: ~p\n", [Step, Client, Features]),
+
+  try
         case Step of
             {Mod, Fun} ->
                 apply(Mod, Fun, [Client, Features]);
@@ -177,8 +210,11 @@ connect(Props) ->
     Server = proplists:get_value(server, Props, <<"localhost">>),
     Host = proplists:get_value(host, Props, Server),
     NewProps = lists:keystore(host, 1, Props, {host, Host}),
-    Pid = Transport:connect(NewProps),
-    maybe_set_jid(#client{module = Transport, rcv_pid = Pid, props = NewProps}).
+%%  io:format("**newprops: ~p\n **Transport: ~p\n", [NewProps, Transport]),
+  Pid = Transport:connect(NewProps),
+  io:format("**Pid connect: ~p\n", [Pid]),
+
+  maybe_set_jid(#client{module = Transport, rcv_pid = Pid, props = NewProps}).
 
 -spec maybe_set_jid(client()) -> client().
 maybe_set_jid(Client = #client{props = Props}) ->
@@ -493,3 +529,12 @@ end_stream(#client{module = Mod, props = Props} = Client) ->
     Mod:assert_stream_end(StreamEndRep, Props).
 
 default_timeout() -> 5000.
+
+create_config_file(N) ->
+  L = lists:seq(1, N),
+  File = "escalusN.config",
+  {ok, S} = file:open(File, write),
+  io:format(S, "{ejabberd_node, 'ejabberd@localhost'}.~n{ejabberd_cookie, ejabberd}.~n{ejabberd_domain, <<\"localhost\">>}.~n{escalus_users, [~n", []),
+  lists:foreach(fun(X) -> io:format(S, "{user_~p, [~n{username, <<\"user_~p\">>},~n{server, <<\"localhost\">>},~n{password, <<\"pass_~p\">>}]},~n", [X, X, X]) end, L),
+  %%io:format(S, "]\}."),
+  file:close(S).
