@@ -100,9 +100,9 @@
 %%%===================================================================
 %%% Public API
 %%%===================================================================
-mohak_start(Config, N) ->
+mohak_start(ConfigPath, N) ->
 %%  {_,{_,_,_,P1,_,_},_,_} = lists:nth(1,P).
-%%  {ok, Config} = file:consult("../../../../priv/escalusN.config"),
+  {ok, Config} = file:consult(ConfigPath),
   %%escalus:create_users(Config),
   L = [escalus_users:get_options(Config, list_to_atom("user_" ++ integer_to_list(X))) || X <- lists:seq(1, N)],
 %%  io:format("~nL:~p~n", [L]),
