@@ -9,7 +9,7 @@
 -include("escalus.hrl").
 
 %% High-level API
--export([start/1, start/2, mohak_start/1, create_config_file/1,
+-export([start/1, start/2, mohak_start/2, create_config_file/1,
          stop/1]).
 
 %% Low-level API
@@ -100,9 +100,9 @@
 %%%===================================================================
 %%% Public API
 %%%===================================================================
-mohak_start(N) ->
+mohak_start(Config, N) ->
 %%  {_,{_,_,_,P1,_,_},_,_} = lists:nth(1,P).
-  {ok, Config} = file:consult("../../../../priv/escalusN.config"),
+%%  {ok, Config} = file:consult("../../../../priv/escalusN.config"),
   %%escalus:create_users(Config),
   L = [escalus_users:get_options(Config, list_to_atom("user_" ++ integer_to_list(X))) || X <- lists:seq(1, N)],
 %%  io:format("~nL:~p~n", [L]),
