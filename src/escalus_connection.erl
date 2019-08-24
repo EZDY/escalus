@@ -9,7 +9,7 @@
 -include("escalus.hrl").
 
 %% High-level API
--export([start/1, start/2, mohak_start/2, create_config_file/1,
+-export([start/1, start/2, mohak_start/1, create_config_file/1,
          stop/1]).
 
 %% Low-level API
@@ -100,14 +100,17 @@
 %%%===================================================================
 %%% Public API
 %%%===================================================================
-mohak_start(ConfigPath, N) ->
+mohak_start(N) ->
 %%  {_,{_,_,_,P1,_,_},_,_} = lists:nth(1,P).
+  ConfigPath="../../../../priv/escalusN.config",
+  process_flag(trap_exit, true),
   {ok, Config} = file:consult(ConfigPath),
   %%escalus:create_users(Config),
   L = [escalus_users:get_options(Config, list_to_atom("user_" ++ integer_to_list(X))) || X <- lists:seq(1, N)],
 %%  io:format("~nL:~p~n", [L]),
-  PidList = [escalus_connection:start(X)|| X <- L],
-  TimeList = [{ connection_time,TcpTime+AuthTime,tcp_time,TcpTime,auth_time,AuthTime} || {_,_,_,{_,TcpTime},{_,AuthTime}} <- PidList],
+  PidList = [begin escalus_connection:start(X) end || X <- L],
+  RecordsList = [ R || {_,R,_ } <- PidList],
+  ClientList = [Client || {_,_,Client} <- PidList],
 %%  CList = [{ Client,TcpTime,AuthTime} || {_,Client,_,TcpTime,AuthTime} <- PidList],
 %%    io:format("~nTimeList:~p~n", [TimeList]),
 %%    io:format("~nPidList:~p~n", [PidList]),
@@ -117,7 +120,7 @@ mohak_start(ConfigPath, N) ->
 %%  ConnectionTime= (#time.auth_end - #time.tcp_start)/ 1.0e6,
 %%  io:format("~nTCP:~p~s~n", [TCPTime ,"ms"]),
 %%  io:format("~nAUTH:~p~s~n", [AuthTime ,"ms"]),
-  TimeList.
+  ClientList.
   %%io:format("~nCONN:~p~s~n", [ConnectionTime ,"ms"]).
   %%io:format("***tcp: ~p \n***auth: ~p \n***connection: ~p \n", [TCPTime, AuthTime, TCPTime+AuthTime]).
 
@@ -154,23 +157,34 @@ start(Props) ->
             [step_spec()]) -> {ok, client(), escalus_session:features()} |
                               {error, any()}.
 start(Props, Steps) ->
-%%    io:format("**props: ~p\n **Steps: ~p\n", [Props, Steps]),
-    try
-        %#time{tcp_start = erlang:system_time()},
-        Client = connect(Props),
-        {_,_,_,Pid,_,_}= Client,
-        TcpTime = escalus_tcp:get_tcp_time(Pid),
-        %#time{tcp_end = erlang:system_time()},
-%%        io:format("**client: ~p\n", [Client]),
-        TimeB = os:timestamp(),
-        {Client1, Features} = lists:foldl(fun connection_step/2,
-          {Client, []},
-          [prepare_step(Step)
-            || Step <- Steps]),
-        TimeA = os:timestamp(),
-        AuthTime = {auth_time, timer:now_diff(TimeA, TimeB)},
+    io:format("**props: ~p\n **Steps: ~p\n", [Props, Steps]),
 
-        {ok, Client1, Features, AuthTime, TcpTime}
+   try
+        %#time{tcp_start = erlang:system_time()},
+        case connect(Props) of
+          {ok, Client} ->
+            {_,_,_,Pid,_,_}= Client,
+            {tcp_time,{ConnectingTime,ConnectedTime}} = escalus_tcp:get_tcp_time(Pid),
+            %#time{tcp_end = erlang:system_time()},
+%%          io:format("**client: ~p\n", [Client]),
+            SessionInit = os:system_time(),
+            {Client1, Features} = lists:foldl(fun connection_step/2,
+                {Client, []},
+                [prepare_step(Step)
+                || Step <- Steps]),
+            SessionEstablished = os:system_time(),
+            io:format("~p~n~p~n~p~n~p~n",R = [mohak_create_record(Props,"CONNECTING",ConnectingTime),
+                mohak_create_record(Props,"CONNECTED",ConnectedTime),mohak_create_record(Props,"SESSION_INIT",SessionInit),
+                mohak_create_record(Props,"SESSION_ESTABLISHED",SessionEstablished)]),
+            {ok, R, Client1};
+%%            {ok, Client1, Features, R};
+
+          {error, {tcp_time,{ConnectingTime,_ConnectedTime}}, Client} -> io:format("~p~n~p~n", R = [mohak_create_record(Props,"CONNECTING",ConnectingTime),
+                  mohak_create_record(Props,"CONNECTED",{-1})]),
+            {error, R, Client}
+
+        end
+
     catch
         throw:{connection_step_failed, _Details, _Reason} = Error ->
             {error, Error}
@@ -211,10 +225,14 @@ connect(Props) ->
     Host = proplists:get_value(host, Props, Server),
     NewProps = lists:keystore(host, 1, Props, {host, Host}),
 %%  io:format("**newprops: ~p\n **Transport: ~p\n", [NewProps, Transport]),
-  Pid = Transport:connect(NewProps),
-  io:format("**Pid connect: ~p\n", [Pid]),
+  case Transport:connect(NewProps) of
+    {ok, Pid} ->  io:format("**Pid connect: ~p\n", [Pid]),
 
-  maybe_set_jid(#client{module = Transport, rcv_pid = Pid, props = NewProps}).
+      {ok, maybe_set_jid(#client{module = Transport, rcv_pid = Pid, props = NewProps})};
+    {error, TCPTime} ->io:format("**error TCPTime: ~p\n", [TCPTime]),
+      {error, TCPTime, maybe_set_jid(#client{module = Transport, rcv_pid = 0, props = NewProps})}
+  end.
+
 
 -spec maybe_set_jid(client()) -> client().
 maybe_set_jid(Client = #client{props = Props}) ->
@@ -239,6 +257,7 @@ send_and_receive(Client, Stanza, RecvOptions) ->
 
 -spec send(escalus:client(), exml_stream:element()) -> ok.
 send(#client{module = Mod, event_client = EventClient, rcv_pid = Pid, jid = Jid} = Client, Elem) ->
+    io:format("~nMod:~p~nEventClient:~p~nPid:~p~nJid:~p~nElem:~p~n", [Mod, EventClient, Pid, Jid,Elem]),
     escalus_event:outgoing_stanza(EventClient, Elem),
     escalus_ct:log_stanza(Jid, out, Elem),
     Mod:send(Pid, Elem),
@@ -538,3 +557,11 @@ create_config_file(N) ->
   lists:foreach(fun(X) -> io:format(S, "{user_~p, [~n{username, <<\"user_~p\">>},~n{server, <<\"localhost\">>},~n{password, <<\"pass_~p\">>}]},~n", [X, X, X]) end, L),
   %%io:format(S, "]\}."),
   file:close(S).
+
+mohak_create_record(Props,Status,Time) ->
+  {username,Username}=lists:keyfind(username, 1, Props),
+  {host, ServerAddress}=lists:keyfind(host, 1, Props),
+  {port, Port}=lists:keyfind(port, 1, Props),
+  DeviceID=abcd,
+  Record=lists:flatten(io_lib:format("~s, ~s, ~s:~B, ~s, ~s",[Username,DeviceID,ServerAddress,Port,Status,lists:flatten(io_lib:format("~p", [Time]))])),
+  Record.

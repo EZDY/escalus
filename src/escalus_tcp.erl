@@ -82,8 +82,11 @@
 connect(Opts0) ->
     Opts1 = opts_to_map(Opts0),
 %%    io:format("**Opts1: ~p\n **?module: ~p\n **self: ~p\n ",[Opts1,?MODULE, self()]),
-    {ok, Pid} = gen_server:start_link(?MODULE, [Opts1, self()], []),
-    Pid.
+    case gen_server:start_link(?MODULE, [Opts1, self()], []) of
+      {ok, Pid} -> {ok,Pid};
+      {error,#state{tcp_time = TCPTime}} ->io:format("**stop tcp: ~p~n",[TCPTime]),
+        {error, TCPTime}
+    end.
 
 -spec send(pid(), exml_stream:element() | [exml_stream:element()] | binary()) -> ok.
 send(Pid, ElemOrData) ->
@@ -205,19 +208,25 @@ init([Opts0, Owner]) ->
 
     SM = get_stream_management_opt(Opts1),
 %%    io:format("**opts1:~p\n **SM:~p\n",[Opts1,SM]),
-  {{ok, Socket},TCPTime} = do_connect(Opts1),
-    io:format("**socket:~p\n",[Socket]),
-  io:format("**TCPTIME:~p\n",[TCPTime]),
-  {ok, Parser} = exml_stream:new_parser(ParserOpts),
-    {ok, #state{owner = Owner,
-                socket = Socket,
-                parser = Parser,
-                ssl = IsSSLConnection,
-                sm_state = SM,
-                event_client = EventClient,
-                on_reply = OnReplyFun,
-                on_request = OnRequestFun,
-                tcp_time = TCPTime}}.
+  case do_connect(Opts1) of
+    {{ok, Socket},TCPTime} ->
+      {ok, Parser} = exml_stream:new_parser(ParserOpts),
+      {ok, #state{owner = Owner,
+        socket = Socket,
+        parser = Parser,
+        ssl = IsSSLConnection,
+        sm_state = SM,
+        event_client = EventClient,
+        on_reply = OnReplyFun,
+        on_request = OnRequestFun,
+        tcp_time = TCPTime}};
+    {{error, _},TCPTime} ->
+      io:format("**error init tcp: ~p~n",[TCPTime]),
+      {stop, #state{tcp_time = TCPTime}}
+  end.
+%%    io:format("**socket:~p\n",[Socket]),
+%%  io:format("**TCPTIME:~p\n",[TCPTime]),
+
 
 
 -spec handle_call(term(), {pid(), term()}, state()) ->
@@ -504,12 +513,12 @@ do_connect(#{ssl        := IsSSLConn,
              ssl_opts   := SSLOpts} = Opts) ->
     Address = host_to_inet(Host),
     SocketOpts = get_socket_opts(Opts),
-    TimeB = os:timestamp(),
+    ConnectingTime = os:system_time(),
     Reply = maybe_ssl_connection(IsSSLConn, Address, Port, SocketOpts, SSLOpts),
-    TimeA = os:timestamp(),
-    ConnectionTime = {tcp_time, timer:now_diff(TimeA, TimeB)},
-%%    io:format("**reply:~p\n **time:~p\n **fun:~p\n",[Reply,ConnectionTime,
-%%              erlang:fun_info(OnConnectFun)]),
+    ConnectedTime = os:system_time(),
+    ConnectionTime = {tcp_time, {ConnectingTime, ConnectedTime}},
+   io:format("**reply:~p\n **time:~p\n **Address:~p\n",[Reply,ConnectionTime,
+             Address]),
     case Reply of
         {ok, Socket} ->
           O = OnConnectFun({ok, Socket, ConnectionTime});
