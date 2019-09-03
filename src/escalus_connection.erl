@@ -9,7 +9,7 @@
 -include("escalus.hrl").
 
 %% High-level API
--export([start/1, start/2, mohak_start/1, create_config_file/1,
+-export([start/1, start/2, create_config_file/1,
          stop/1]).
 
 %% Low-level API
@@ -100,29 +100,31 @@
 %%%===================================================================
 %%% Public API
 %%%===================================================================
-mohak_start(N) ->
-%%  {_,{_,_,_,P1,_,_},_,_} = lists:nth(1,P).
-  ConfigPath="../../../../priv/escalusN.config",
-  process_flag(trap_exit, true),
-  {ok, Config} = file:consult(ConfigPath),
-  %%escalus:create_users(Config),
-  L = [escalus_users:get_options(Config, list_to_atom("user_" ++ integer_to_list(X))) || X <- lists:seq(1, N)],
-%%  io:format("~nL:~p~n", [L]),
-  PidList = [begin escalus_connection:start(X) end || X <- L],
-  RecordsList = [ R || {_,R,_ } <- PidList],
-  ClientList = [Client || {_,_,Client} <- PidList],
-%%  CList = [{ Client,TcpTime,AuthTime} || {_,Client,_,TcpTime,AuthTime} <- PidList],
-%%    io:format("~nTimeList:~p~n", [TimeList]),
-%%    io:format("~nPidList:~p~n", [PidList]),
-
-%%  TCPTime = (#time.tcp_end - #time.tcp_start)/ 1.0e6,
-%%  AuthTime= (#time.auth_end - #time.auth_start)/ 1.0e6,
-%%  ConnectionTime= (#time.auth_end - #time.tcp_start)/ 1.0e6,
-%%  io:format("~nTCP:~p~s~n", [TCPTime ,"ms"]),
-%%  io:format("~nAUTH:~p~s~n", [AuthTime ,"ms"]),
-  ClientList.
-  %%io:format("~nCONN:~p~s~n", [ConnectionTime ,"ms"]).
-  %%io:format("***tcp: ~p \n***auth: ~p \n***connection: ~p \n", [TCPTime, AuthTime, TCPTime+AuthTime]).
+%%mohak_start(N) ->
+%%%%  {_,{_,_,_,P1,_,_},_,_} = lists:nth(1,P).
+%%  ConfigPath="../../../../priv/escalusN.config",
+%%  process_flag(trap_exit, true),
+%%  {ok, Config} = file:consult(ConfigPath),
+%%  %%escalus:create_users(Config),
+%%  L = [escalus_users:get_options(Config, list_to_atom("user_" ++ integer_to_list(X))) || X <- lists:seq(1, N)],
+%%%%  io:format("~nL:~p~n", [L]),
+%%  PidList = [begin escalus_connection:start(X) end || X <- L],
+%%  RecordsList = [ R || {_,R,_ } <- PidList],
+%%  ClientList = [Client || {_,_,Client} <- PidList],
+%%%%  CList = [{ Client,TcpTime,AuthTime} || {_,Client,_,TcpTime,AuthTime} <- PidList],
+%%%%    io:format("~nTimeList:~p~n", [TimeList]),
+%%%%    io:format("~nPidList:~p~n", [PidList]),
+%%  io:format("~p~n",[PidList]),
+%%
+%%  RecordsList.
+%%%%  TCPTime = (#time.tcp_end - #time.tcp_start)/ 1.0e6,
+%%%%  AuthTime= (#time.auth_end - #time.auth_start)/ 1.0e6,
+%%%%  ConnectionTime= (#time.auth_end - #time.tcp_start)/ 1.0e6,
+%%%%  io:format("~nTCP:~p~s~n", [TCPTime ,"ms"]),
+%%%%  io:format("~nAUTH:~p~s~n", [AuthTime ,"ms"]),
+%%%%  ClientList.
+%%  %%io:format("~nCONN:~p~s~n", [ConnectionTime ,"ms"]).
+%%  %%io:format("***tcp: ~p \n***auth: ~p \n***connection: ~p \n", [TCPTime, AuthTime, TCPTime+AuthTime]).
 
 
 -spec start(escalus_users:user_spec()) -> {ok, client(), escalus_users:user_spec()}
@@ -173,14 +175,14 @@ start(Props, Steps) ->
                 [prepare_step(Step)
                 || Step <- Steps]),
             SessionEstablished = os:system_time(),
-            io:format("~p~n~p~n~p~n~p~n",R = [mohak_create_record(Props,"CONNECTING",ConnectingTime),
-                mohak_create_record(Props,"CONNECTED",ConnectedTime),mohak_create_record(Props,"SESSION_INIT",SessionInit),
-                mohak_create_record(Props,"SESSION_ESTABLISHED",SessionEstablished)]),
+            io:format("~p~n~p~n~p~n~p~n",R = [escalus_mk_create_record(Props,"CONNECTING",ConnectingTime),
+                escalus_mk_create_record(Props,"CONNECTED",ConnectedTime),escalus_mk_create_record(Props,"SESSION_INIT",SessionInit),
+                escalus_mk_create_record(Props,"SESSION_ESTABLISHED",SessionEstablished)]),
             {ok, R, Client1};
 %%            {ok, Client1, Features, R};
 
-          {error, {tcp_time,{ConnectingTime,_ConnectedTime}}, Client} -> io:format("~p~n~p~n", R = [mohak_create_record(Props,"CONNECTING",ConnectingTime),
-                  mohak_create_record(Props,"CONNECTED",{-1})]),
+          {error, {tcp_time,{ConnectingTime,_ConnectedTime}}, Client} -> io:format("~p~n~p~n", R = [escalus_mk_create_record(Props,"CONNECTING",ConnectingTime),
+                  escalus_mk_create_record(Props,"CONNECTED",{-1})]),
             {error, R, Client}
 
         end
@@ -520,6 +522,14 @@ get_connection_steps(UserSpec) ->
         {_, Steps} -> Steps
     end.
 
+escalus_mk_create_record(Props,Status,Time) ->
+  {username,Username}=lists:keyfind(username, 1, Props),
+  {host, ServerAddress}=lists:keyfind(host, 1, Props),
+  {port, Port}=lists:keyfind(port, 1, Props),
+  DeviceID=abcd,
+  Record=lists:flatten(io_lib:format("~s, ~s, ~s:~B, ~s, ~s",[Username,DeviceID,ServerAddress,Port,Status,lists:flatten(io_lib:format("~p", [Time]))])),
+  Record.
+
 default_connection_steps() ->
     [start_stream,
      stream_features,
@@ -558,10 +568,3 @@ create_config_file(N) ->
   %%io:format(S, "]\}."),
   file:close(S).
 
-mohak_create_record(Props,Status,Time) ->
-  {username,Username}=lists:keyfind(username, 1, Props),
-  {host, ServerAddress}=lists:keyfind(host, 1, Props),
-  {port, Port}=lists:keyfind(port, 1, Props),
-  DeviceID=abcd,
-  Record=lists:flatten(io_lib:format("~s, ~s, ~s:~B, ~s, ~s",[Username,DeviceID,ServerAddress,Port,Status,lists:flatten(io_lib:format("~p", [Time]))])),
-  Record.
